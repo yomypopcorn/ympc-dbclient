@@ -1,0 +1,23 @@
+{
+  "name": "yomypopcorn-dbclient",
+  "version": "0.0.1",
+  "description": "A nice API for the Redis database used throughout YOMYPOPCORN apps",
+  "main": "index.js",
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/yomypopcorn/yomypopcorn-dbclient.git"
+  },
+  "contributors": [
+    "Max Kueng (http://maxkueng.com/contact)"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "async": "^0.9.0",
+    "debug": "^2.1.1",
+    "hiredis": "^0.1.17",
+    "object-assign": "^2.0.0",
+    "redis": "^0.12.1",
+    "through2": "^0.6.3",
+    "yomypopcorn-utils": "0.0.1"
+  }
+}
