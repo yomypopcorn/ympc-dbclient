@@ -218,7 +218,9 @@ function db (options) {
 	}
 
 	function getUser (type, username, callback) {
-		var key = 'user:' + type + ':' + username.toLowerCase();
+		username = username.toLowerCase();
+		var key = 'user:' + type + ':' + username;
+
 		client.hgetall(key, function (err, user) {
 			cb(callback, err, user);
 		});
@@ -234,6 +236,8 @@ function db (options) {
 		if (typeof data !== 'object') { return cb(callback, new Error('Missing data object')); }
 		if (!data.type) { return cb(callback, new Error('Missing type')) }
 		if (!data.username) { return cb(callback, new Error('Missing username')) }
+
+		data.username = data.username.toLowerCase();
 
 		getUser(data.type, data.username, function (err, user) {
 			if (user) { return callback(new Error('User already exists')); }
@@ -284,6 +288,7 @@ function db (options) {
 	}
 
 	function createUserAuthToken (ttl, type, username, callback) {
+		username = username.toLowerCase();
 
 		getUser(type, username, function (err, user) {
 			if (!user) { return cb(callback, new Error('User not found')); }
@@ -320,6 +325,7 @@ function db (options) {
 	}
 
 	function getUserAuthToken (type, username, callback) {
+		username = username.toLowerCase();
 		var userTokenKey = 'userauthtoken:' + type + ':' + username;
 
 		client.get(userTokenKey, function (err, token) {
@@ -337,6 +343,8 @@ function db (options) {
 	}
 
 	function deleteUserAuthToken (type, username, callback) {
+		username = username.toLowerCase();
+
 		getUserAuthToken(type, username, function (err, tokenData) {
 			if (err) { return cb(callback);}
 			if (!tokenData) { return cb(callback);}
