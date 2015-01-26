@@ -182,7 +182,7 @@ function db (options) {
 	}
 
 	function createActiveShowsStream () {
-		var stream = through2.obj();	
+		var stream = through2.obj();
 
 		function writeData () {
 			getActiveShowIds(function (err, showIds) {
@@ -283,8 +283,7 @@ function db (options) {
 		return Math.floor( Math.random() * ( max - min + 1 ) + min);
 	}
 
-	function createUserAuthToken (type, username, callback) {
-		var TOKEN_EXPIRATION_TIME = 30000;
+	function createUserAuthToken (ttl, type, username, callback) {
 
 		getUser(type, username, function (err, user) {
 			if (!user) { return cb(callback, new Error('User not found')); }
@@ -307,10 +306,10 @@ function db (options) {
 					var multi = client.multi();
 
 					multi.set(userTokenKey, token);
-					multi.pexpire(userTokenKey, TOKEN_EXPIRATION_TIME);
+					multi.pexpire(userTokenKey, ttl);
 
 					multi.hmset(tokenKey, tokenData);
-					multi.pexpire(tokenKey, TOKEN_EXPIRATION_TIME);
+					multi.pexpire(tokenKey, ttl);
 
 					multi.exec(function (err) {
 						cb(callback, err, tokenData);
