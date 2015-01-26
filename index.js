@@ -240,7 +240,7 @@ function db (options) {
 		data.username = data.username.toLowerCase();
 
 		getUser(data.type, data.username, function (err, user) {
-			if (user) { return callback(new Error('User already exists')); }
+			if (user) { return cb(callback, new Error('User already exists')); }
 
 			getTime(function (err, time) {
 				if (err) { return cb(callback, err); }
