@@ -3,6 +3,11 @@
   "version": "0.0.1",
   "description": "A nice API for the Redis database used throughout YOMYPOPCORN apps",
   "main": "index.js",
+  "files": [
+    "index.js",
+    "LICENSE",
+    "README.md"
+  ],
   "repository": {
     "type": "git",
     "url": "git://github.com/yomypopcorn/yomypopcorn-dbclient.git"
