@@ -1,5 +1,6 @@
 var debug = require('debug')('yomypopcorn:dbclient');
 var path = require('path');
+var crypto = require('crypto');
 var async = require('async');
 var redis = require('redis');
 var extend = require('object-assign');
@@ -28,6 +29,10 @@ function db (options) {
 		client = redis.createClient(options.socket, redisOptions);
 	} else {
 		client = redis.createClient(options.port, options.host, redisOptions);
+	}
+
+	function close () {
+		client.quit();
 	}
 
 	function saveShow (show, callback) {
@@ -111,12 +116,16 @@ function db (options) {
 
 	function getShow (imdbId, callback) {
 		var key = 'show:' + imdbId;
-		client.hgetall(key, callback);
+		client.hgetall(key, function (err, show) {
+			cb(callback, err, show);
+		});
 	}
 
 	function getLatestEpisode (imdbId, callback) {
 		var key = 'episode:' + imdbId;
-		client.hgetall(key, callback);
+		client.hgetall(key, function (err, episode) {
+			cb(callback, err, episode);
+		});
 	}
 
 	function getTime (callback) {
@@ -203,12 +212,154 @@ function db (options) {
 			data.time = time;
 
 			client.hmset(key, data, function (err) {
-				cb(err, data)
+				cb(callback, err, data)
 			});
 		});
 	}
 
+	function getUser (type, username, callback) {
+		var key = 'user:' + type + ':' + username.toLowerCase();
+		client.hgetall(key, function (err, user) {
+			cb(callback, err, user);
+		});
+	}
+
+	function getYoUser (username, callback) {
+		getUser('yo', username, function (err, user) {
+			cb(callback, err, user);
+		});
+	}
+
+	function createUser (data, callback) {
+		if (typeof data !== 'object') { return cb(callback, new Error('Missing data object')); }
+		if (!data.type) { return cb(callback, new Error('Missing type')) }
+		if (!data.username) { return cb(callback, new Error('Missing username')) }
+
+		getUser(data.type, data.username, function (err, user) {
+			if (user) { return callback(new Error('User already exists')); }
+
+			getTime(function (err, time) {
+				if (err) { return cb(callback, err); }
+
+				var userId = data.type + ':' + data.username.toLowerCase();
+				var key = 'user:' + userId;
+
+				var userData = {
+					type: data.type,
+					username: data.username,
+					createdAt: time
+				};
+
+				client.hmset(key, userData, function (err) {
+					cb(callback, err, userData);
+				});
+			});
+		});
+	}
+
+	function createYoUser (data, callback) {
+		if (typeof data !== 'object') { return cb(callback, new Error('Missing data object')); }
+
+		data.type = 'yo';
+
+		createUser(data, function (err, user) {
+			cb(callback, err, user);
+		});
+	}
+
+	function createToken (length, callback) {
+		crypto.randomBytes(length, function (err, token) {
+			if (err) { return cb(callback, err); }
+			if (!token) { return cb(new Error('Failed to generate token')); }
+
+			cb(callback, null, token.toString('hex'));
+		});
+	}
+
+	function createPin () {
+		var min = 100000;
+		var max = 999999;
+
+		return Math.floor( Math.random() * ( max - min + 1 ) + min);
+	}
+
+	function createUserAuthToken (type, username, callback) {
+		var TOKEN_EXPIRATION_TIME = 30000;
+
+		getUser(type, username, function (err, user) {
+			if (!user) { return cb(callback, new Error('User not found')); }
+
+			createToken(32, function (err, token) {
+				if (err) { return cb(callback, err); }
+
+				getTime(function (err, time) {
+
+					var tokenKey = 'userauthtoken:token:' + token;
+					var userTokenKey = 'userauthtoken:' + type + ':' + username;
+					var pin = createPin();
+
+					var tokenData = {
+						createdAt: time,
+						token: token,
+						pin: pin
+					};
+
+					var multi = client.multi();
+
+					multi.set(userTokenKey, token);
+					multi.pexpire(userTokenKey, TOKEN_EXPIRATION_TIME);
+
+					multi.hmset(tokenKey, tokenData);
+					multi.pexpire(tokenKey, TOKEN_EXPIRATION_TIME);
+
+					multi.exec(function (err) {
+						cb(callback, err, tokenData);
+					});
+				});
+			});
+		});
+	}
+
+	function getUserAuthToken (type, username, callback) {
+		var userTokenKey = 'userauthtoken:' + type + ':' + username;
+
+		client.get(userTokenKey, function (err, token) {
+			if (err) { return cb(callback, err); }
+			if (!token) { return cb(callback, new Error('No token')); }
+
+			var tokenKey = 'userauthtoken:token:' + token;
+
+			client.hgetall(tokenKey, function (err, tokenData) {
+				if (!tokenData) { return cb(callback, new Error('No token')); }
+
+				cb(callback, err, tokenData);
+			});
+		});
+	}
+
+	function deleteUserAuthToken (type, username, callback) {
+		getUserAuthToken(type, username, function (err, tokenData) {
+			if (err) { return cb(callback);}
+			if (!tokenData) { return cb(callback);}
+
+			var userTokenKey = 'userauthtoken:' + type + ':' + username;
+			var tokenKey = 'userauthtoken:token:' + tokenData.token;
+
+			client.del(userTokenKey);
+			client.del(tokenKey);
+
+			cb(callback);
+		});
+	}
+
 	return {
+		getYoUser: getYoUser,
+		createYoUser: createYoUser,
+		createUser: createUser,
+		getUser: getUser,
+		createUserAuthToken: createUserAuthToken,
+		getUserAuthToken: getUserAuthToken,
+		deleteUserAuthToken: deleteUserAuthToken,
 		saveShow: saveShow,
 		getShow: getShow,
 		getLatestEpisode: getLatestEpisode,
@@ -218,6 +369,7 @@ function db (options) {
 		logEpisodeUpdate: logEpisodeUpdate,
 		log: log,
 		getTime: getTime,
-		logScan: logScan
+		logScan: logScan,
+		close: close
 	};
 }
