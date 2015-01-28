@@ -218,16 +218,9 @@ function db (options) {
 	}
 
 	function getUser (userId, callback) {
-		username = username.toLowerCase();
 		var key = 'user:' + userId;
 
 		client.hgetall(key, function (err, user) {
-			cb(callback, err, user);
-		});
-	}
-
-	function getYoUser (username, callback) {
-		getUser('yo', username, function (err, user) {
 			cb(callback, err, user);
 		});
 	}
