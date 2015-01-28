@@ -217,9 +217,9 @@ function db (options) {
 		});
 	}
 
-	function getUser (type, username, callback) {
+	function getUser (userId, callback) {
 		username = username.toLowerCase();
-		var key = 'user:' + type + ':' + username;
+		var key = 'user:' + userId;
 
 		client.hgetall(key, function (err, user) {
 			cb(callback, err, user);
@@ -237,15 +237,14 @@ function db (options) {
 		if (!data.type) { return cb(callback, new Error('Missing type')) }
 		if (!data.username) { return cb(callback, new Error('Missing username')) }
 
-		data.username = data.username.toLowerCase();
+		var userId = createUserId(data.type, data.username);
 
-		getUser(data.type, data.username, function (err, user) {
+		getUser(userId, function (err, user) {
 			if (user) { return cb(callback, new Error('User already exists')); }
 
 			getTime(function (err, time) {
 				if (err) { return cb(callback, err); }
 
-				var userId = data.type + ':' + data.username.toLowerCase();
 				var key = 'user:' + userId;
 
 				var userData = {
@@ -258,16 +257,6 @@ function db (options) {
 					cb(callback, err, userData);
 				});
 			});
-		});
-	}
-
-	function createYoUser (data, callback) {
-		if (typeof data !== 'object') { return cb(callback, new Error('Missing data object')); }
-
-		data.type = 'yo';
-
-		createUser(data, function (err, user) {
-			cb(callback, err, user);
 		});
 	}
 
@@ -287,10 +276,8 @@ function db (options) {
 		return Math.floor( Math.random() * ( max - min + 1 ) + min);
 	}
 
-	function createUserAuthToken (ttl, type, username, callback) {
-		username = username.toLowerCase();
-
-		getUser(type, username, function (err, user) {
+	function createUserAuthToken (ttl, userId, callback) {
+		getUser(userId, function (err, user) {
 			if (!user) { return cb(callback, new Error('User not found')); }
 
 			createToken(32, function (err, token) {
@@ -299,7 +286,7 @@ function db (options) {
 				getTime(function (err, time) {
 
 					var tokenKey = 'userauthtoken:token:' + token;
-					var userTokenKey = 'userauthtoken:' + type + ':' + username;
+					var userTokenKey = 'userauthtoken:' + userId;
 					var pin = createPin();
 
 					var tokenData = {
@@ -324,9 +311,8 @@ function db (options) {
 		});
 	}
 
-	function getUserAuthToken (type, username, callback) {
-		username = username.toLowerCase();
-		var userTokenKey = 'userauthtoken:' + type + ':' + username;
+	function getUserAuthToken (userId, callback) {
+		var userTokenKey = 'userauthtoken:' + userId;
 
 		client.get(userTokenKey, function (err, token) {
 			if (err) { return cb(callback, err); }
@@ -342,14 +328,12 @@ function db (options) {
 		});
 	}
 
-	function deleteUserAuthToken (type, username, callback) {
-		username = username.toLowerCase();
-
+	function deleteUserAuthToken (userId, callback) {
 		getUserAuthToken(type, username, function (err, tokenData) {
 			if (err) { return cb(callback);}
 			if (!tokenData) { return cb(callback);}
 
-			var userTokenKey = 'userauthtoken:' + type + ':' + username;
+			var userTokenKey = 'userauthtoken:' + userId;
 			var tokenKey = 'userauthtoken:token:' + tokenData.token;
 
 			client.del(userTokenKey);
@@ -359,9 +343,12 @@ function db (options) {
 		});
 	}
 
+	function createUserId (type, username) {
+		return String(type + ':' + username).toLowerCase();;
+	}
+
 	return {
-		getYoUser: getYoUser,
-		createYoUser: createYoUser,
+		createUserId: createUserId,
 		createUser: createUser,
 		getUser: getUser,
 		createUserAuthToken: createUserAuthToken,
