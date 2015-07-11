@@ -290,8 +290,7 @@ function db (options) {
 					} catch(e) {
 						return {};
 					}
-
-				})
+				});
 			}
 			cb(callback, err, items);
 		});
