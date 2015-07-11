@@ -217,6 +217,58 @@ function db (options) {
 		});
 	}
 
+	function subscriptionsKey (userid) {
+		return "subscriptions:" + userid;
+	}
+
+	function subscribersKey (showid) {
+		return "subscribers:" + showid;
+	}
+
+	function getSubscriptions (userid, callback) {
+		var key = subscriptionsKey(userid);
+		client.smembers(key, function (err, subscriptions) {
+			cb(callback, err, subscriptions);
+		});
+	}
+
+	function getSubscribers (showid, callback) {
+		var key = subscribersKey(showid);
+		client.smembers(key, function (err, subscribers) {
+			cb(callback, err, subscribers);
+		});
+	}
+
+	function subscribeShow (userid, showid, callback) {
+
+		var keyUser = subscriptionsKey(userid);
+		var keyShow = subscribersKey(showid);
+
+		var multi = client.multi();
+
+		multi.sadd(keyShow, userid);
+		multi.sadd(keyUser, showid);
+
+		multi.exec(function (err) {
+			cb(callback, err);
+		});
+	}
+
+	function unsubscribeShow (userid, showid, callback) {
+
+		var keyUser = subscriptionsKey(userid);
+		var keyShow = subscribersKey(showid);
+
+		var multi = client.multi();
+
+		multi.srem(keyShow, userid);
+		multi.srem(keyUser, showid);
+
+		multi.exec(function (err) {
+			cb(callback, err);
+		});
+	}
+
 	function getUser (userId, callback) {
 		var key = 'user:' + userId;
 
@@ -355,6 +407,10 @@ function db (options) {
 		createActiveShowsStream: createActiveShowsStream,
 		logEpisodeUpdate: logEpisodeUpdate,
 		log: log,
+		getSubscribers: getSubscribers,
+		getSubscriptions: getSubscriptions,
+		subscribeShow: subscribeShow,
+		unsubscribeShow: unsubscribeShow,
 		getTime: getTime,
 		logScan: logScan,
 		close: close
