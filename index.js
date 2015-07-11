@@ -269,6 +269,34 @@ function db (options) {
 		});
 	}
 
+	function feedKey(userid) {
+		return 'feed:' + userid;
+	}
+
+	function addToFeed (userid, item, callback) {
+		var key = feedKey(userid);
+		client.lpush(key, JSON.stringify(item), function (err) {
+			cb(callback, err);
+		});
+	}
+
+	function getFeed(userid, callback) {
+		var key = feedKey(userid);
+		client.lrange(key, 0, -1, function (err, items) {
+			if (!err && items) {
+				items = items.map(function (item) {
+					try {
+						return JSON.parse(item);
+					} catch(e) {
+						return {};
+					}
+
+				})
+			}
+			cb(callback, err, items);
+		});
+	}
+
 	function getUser (userId, callback) {
 		var key = 'user:' + userId;
 
@@ -411,6 +439,8 @@ function db (options) {
 		getSubscriptions: getSubscriptions,
 		subscribeShow: subscribeShow,
 		unsubscribeShow: unsubscribeShow,
+		addToFeed: addToFeed,
+		getFeed: getFeed,
 		getTime: getTime,
 		logScan: logScan,
 		close: close
