@@ -70,7 +70,8 @@ function db (options) {
         season: episode.season,
         episode: episode.episode,
         title: episode.title,
-        overview: episode.overview
+        overview: episode.overview,
+        first_aired: episode.first_aired
 
       }, function (err) {
         cb(callback, err);
@@ -111,6 +112,28 @@ function db (options) {
       }
 
       cb(callback, null, show);
+    });
+  }
+
+  function saveLatestEpisode (show, callback) {
+    if (!show.latestEpisode) {
+      return cb(callback);
+    }
+
+    var episode = show.latestEpisode;
+    var key = 'episode:' + show.imdb_id + ':' + episode.sien;
+
+    client.hmset(key, {
+      imdb_id: show.imdb_id,
+      sien: episode.sien,
+      season: episode.season,
+      episode: episode.episode,
+      title: episode.title,
+      overview: episode.overview,
+      first_aired: episode.first_aired
+
+    }, function (err) {
+      cb(callback, err);
     });
   }
 
@@ -217,16 +240,16 @@ function db (options) {
     });
   }
 
-  function subscriptionsKey (userid) {
-    return "subscriptions:" + userid;
+  function subscriptionsKey (userId) {
+    return "subscriptions:" + userId;
   }
 
   function subscribersKey (showid) {
     return "subscribers:" + showid;
   }
 
-  function getSubscriptions (userid, callback) {
-    var key = subscriptionsKey(userid);
+  function getSubscriptions (userId, callback) {
+    var key = subscriptionsKey(userId);
     client.smembers(key, function (err, subscriptions) {
       cb(callback, err, subscriptions);
     });
@@ -239,14 +262,14 @@ function db (options) {
     });
   }
 
-  function subscribeShow (userid, showid, callback) {
+  function subscribeShow (userId, showid, callback) {
 
-    var keyUser = subscriptionsKey(userid);
+    var keyUser = subscriptionsKey(userId);
     var keyShow = subscribersKey(showid);
 
     var multi = client.multi();
 
-    multi.sadd(keyShow, userid);
+    multi.sadd(keyShow, userId);
     multi.sadd(keyUser, showid);
 
     multi.exec(function (err) {
@@ -254,14 +277,14 @@ function db (options) {
     });
   }
 
-  function unsubscribeShow (userid, showid, callback) {
+  function unsubscribeShow (userId, showid, callback) {
 
-    var keyUser = subscriptionsKey(userid);
+    var keyUser = subscriptionsKey(userId);
     var keyShow = subscribersKey(showid);
 
     var multi = client.multi();
 
-    multi.srem(keyShow, userid);
+    multi.srem(keyShow, userId);
     multi.srem(keyUser, showid);
 
     multi.exec(function (err) {
@@ -269,30 +292,58 @@ function db (options) {
     });
   }
 
-  function feedKey(userid) {
-    return 'feed:' + userid;
+  function feedKey(userId) {
+    return 'feed:' + userId;
   }
 
-  function addToFeed (userid, item, callback) {
-    var key = feedKey(userid);
-    client.lpush(key, JSON.stringify(item), function (err) {
+  function addLatestEpisodeToFeed (userId, show, callback) {
+    if (!show.latestEpisode) {
+      return cb(callback);
+    }
+
+    var episode = show.latestEpisode;
+    var episodeKey = 'episode:' + show.imdb_id + ':' + episode.sien;
+    var key = feedKey(userId);
+
+    client.lpush(key, episodeKey, function (err) {
       cb(callback, err);
     });
   }
 
-  function getFeed(userid, callback) {
-    var key = feedKey(userid);
-    client.lrange(key, 0, -1, function (err, items) {
-      if (!err && items) {
-        items = items.map(function (item) {
-          try {
-            return JSON.parse(item);
-          } catch(e) {
-            return {};
-          }
-        });
-      }
-      cb(callback, err, items);
+  function getFeed(userId, callback) {
+    var key = feedKey(userId);
+
+    client.lrange(key, 0, -1, function (err, feedKeys) {
+      if (err) { return db(callback, null, []); }
+
+      async.map(
+        feedKeys,
+
+        function (feedKey, callback) {
+          console.log('チ', userId, feedKey);
+          client.hgetall(feedKey, function (err, episode) {
+            if (err) { return callback(err); }
+
+            getShow(episode.imdb_id, function (err, show) {
+              if (err) { return callback(err); }
+
+              callback(null, {
+                imdb_id: show.imdb_id,
+                title: show.title,
+                episide_title: episode.title,
+                season: episode.season,
+                episode: episode.episode,
+                poster: show.poster,
+                first_aired: episode.first_aired
+              });
+            });
+          });
+        },
+
+        function (err, results) {
+          cb(callback, null, results || []);
+        }
+      );
     });
   }
 
@@ -427,6 +478,7 @@ function db (options) {
     getUserAuthToken: getUserAuthToken,
     deleteUserAuthToken: deleteUserAuthToken,
     saveShow: saveShow,
+    saveLatestEpisode: saveLatestEpisode,
     getShow: getShow,
     getLatestEpisode: getLatestEpisode,
     getActiveShowIds: getActiveShowIds,
@@ -438,7 +490,7 @@ function db (options) {
     getSubscriptions: getSubscriptions,
     subscribeShow: subscribeShow,
     unsubscribeShow: unsubscribeShow,
-    addToFeed: addToFeed,
+    addLatestEpisodeToFeed: addLatestEpisodeToFeed,
     getFeed: getFeed,
     getTime: getTime,
     logScan: logScan,
