@@ -244,8 +244,8 @@ function db (options) {
     return "subscriptions:" + userId;
   }
 
-  function subscribersKey (showid) {
-    return "subscribers:" + showid;
+  function subscribersKey (showId) {
+    return "subscribers:" + showId;
   }
 
   function getSubscriptions (userId, callback) {
@@ -255,37 +255,37 @@ function db (options) {
     });
   }
 
-  function getSubscribers (showid, callback) {
-    var key = subscribersKey(showid);
+  function getSubscribers (showId, callback) {
+    var key = subscribersKey(showId);
     client.smembers(key, function (err, subscribers) {
       cb(callback, err, subscribers);
     });
   }
 
-  function subscribeShow (userId, showid, callback) {
+  function subscribeShow (userId, showId, callback) {
 
     var keyUser = subscriptionsKey(userId);
-    var keyShow = subscribersKey(showid);
+    var keyShow = subscribersKey(showId);
 
     var multi = client.multi();
 
     multi.sadd(keyShow, userId);
-    multi.sadd(keyUser, showid);
+    multi.sadd(keyUser, showId);
 
     multi.exec(function (err) {
       cb(callback, err);
     });
   }
 
-  function unsubscribeShow (userId, showid, callback) {
+  function unsubscribeShow (userId, showId, callback) {
 
     var keyUser = subscriptionsKey(userId);
-    var keyShow = subscribersKey(showid);
+    var keyShow = subscribersKey(showId);
 
     var multi = client.multi();
 
     multi.srem(keyShow, userId);
-    multi.srem(keyUser, showid);
+    multi.srem(keyUser, showId);
 
     multi.exec(function (err) {
       cb(callback, err);
