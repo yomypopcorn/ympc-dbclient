@@ -320,7 +320,6 @@ function db (options) {
         feedKeys,
 
         function (feedKey, callback) {
-          console.log('チ', userId, feedKey);
           client.hgetall(feedKey, function (err, episode) {
             if (err) { return callback(err); }
 
