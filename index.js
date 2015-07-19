@@ -71,7 +71,7 @@ function db (options) {
           var ts = time;
 
           if (currentEpisode && +currentEpisode.sien === +episode.sien) {
-            if (!currentEpisode.timestamp) { ts = +currentEpisode.first_aired * 1000; }
+            if (!currentEpisode.timestamp) { ts = +currentEpisode.first_aired; }
             if (currentEpisode.timestamp) { ts = +currentEpisode.timestamp; }
           }
 
