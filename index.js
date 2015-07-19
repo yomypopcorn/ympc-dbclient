@@ -64,18 +64,34 @@ function db (options) {
       var key = 'episode:' + show.imdb_id;
       var episode = show.latestEpisode;
 
-      client.hmset(key, {
-        imdb_id: show.imdb_id,
-        sien: episode.sien,
-        season: episode.season,
-        episode: episode.episode,
-        title: episode.title,
-        overview: episode.overview,
-        first_aired: episode.first_aired
+      getTime(function (err, time) {
+        if (err) { return cb(callback, err); }
 
-      }, function (err) {
-        cb(callback, err);
+        client.hgetall(key, function (err, currentEpisode) {
+          var ts = time;
+
+          if (currentEpisode && +currentEpisode.sien === +episode.sien) {
+            if (!currentEpisode.timestamp) { ts = +currentEpisode.first_aired * 1000; }
+            if (currentEpisode.timestamp) { ts = +currentEpisode.timestamp; }
+          }
+
+          client.hmset(key, {
+            imdb_id: show.imdb_id,
+            sien: episode.sien,
+            season: episode.season,
+            episode: episode.episode,
+            title: episode.title,
+            overview: episode.overview,
+            first_aired: episode.first_aired,
+            timestamp: ts
+
+          }, function (err) {
+            cb(callback, err);
+          });
+        });
+
       });
+
     }
 
     function addToSet (show, callback) {
@@ -123,17 +139,22 @@ function db (options) {
     var episode = show.latestEpisode;
     var key = 'episode:' + show.imdb_id + ':' + episode.sien;
 
-    client.hmset(key, {
-      imdb_id: show.imdb_id,
-      sien: episode.sien,
-      season: episode.season,
-      episode: episode.episode,
-      title: episode.title,
-      overview: episode.overview,
-      first_aired: episode.first_aired
+    getTime(function (err, time) {
+      if (err) { return cb(callback, err); }
 
-    }, function (err) {
-      cb(callback, err);
+      client.hmset(key, {
+        imdb_id: show.imdb_id,
+        sien: episode.sien,
+        season: episode.season,
+        episode: episode.episode,
+        title: episode.title,
+        overview: episode.overview,
+        first_aired: episode.first_aired,
+        timestamp: time
+
+      }, function (err) {
+        cb(callback, err);
+      });
     });
   }
 
@@ -322,6 +343,7 @@ function db (options) {
         function (feedKey, callback) {
           client.hgetall(feedKey, function (err, episode) {
             if (err) { return callback(err); }
+            if (!episode) { return callback(err); }
 
             getShow(episode.imdb_id, function (err, show) {
               if (err) { return callback(err); }
@@ -333,13 +355,19 @@ function db (options) {
                 season: episode.season,
                 episode: episode.episode,
                 poster: show.poster,
-                first_aired: episode.first_aired
+                first_aired: episode.first_aired,
+                timestamp: episode.timestamp
               });
             });
           });
         },
 
         function (err, results) {
+          // filter out null values
+          results = results.filter(function (result) {
+            return !!result;
+          });
+
           cb(callback, null, results || []);
         }
       );
