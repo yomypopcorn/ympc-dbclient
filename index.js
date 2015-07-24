@@ -393,7 +393,9 @@ function db (options) {
             return !!result;
           })
           .sort(function (a, b) {
-            return b.sien - a.sien;
+            var ats = a.timestamp || a.first_aired;
+            var bts = b.timestamp || b.first_aired;
+            return bts - ats;
           });
 
           cb(callback, null, results || []);
