@@ -12,6 +12,15 @@ exports = module.exports = db;
 var padTime = utils.padTime;
 var cb = utils.cb;
 
+function removeNonScalars (obj) {
+    function replacer (key, value) {
+      if (key && typeof value === 'object') { return undefined; }
+      return value;
+    }
+
+    return JSON.parse(JSON.stringify(obj, replacer));
+}
+
 function db (options) {
   options = options || {};
 
@@ -31,128 +40,149 @@ function db (options) {
     client = redis.createClient(options.port, options.host, redisOptions);
   }
 
+  function makeShowKey (showId) {
+    if (typeof showId === 'object') { showId = showId.id; }
+    return 'show:' + showId;
+  }
+
+  function makeEpisodeKey (showId, episodeSien) {
+    if (typeof episodeSien === 'object') { episodeSien = episodeSien.sien; }
+    if (typeof episodeSien === 'undefined') { episodeSien = 'latest'; }
+
+    return makeShowKey(showId) + ':episode:' + episodeSien;
+  }
+
+  function makeEpisodesKey (showId) {
+    return makeShowKey(showId) + ':episodes';
+  }
+
+  function makeSubscriptionsKey (userId) {
+    return makeUserKey(userId) + ':subscriptions';
+  }
+
+  function makeSubscribersKey (showId) {
+    return makeShowKey(showId) + ':subscribers'
+  }
+
+  function makeUserKey (userId) {
+    return 'user:' + userId
+  }
+
+  function makeFeedKey(userId) {
+    return makeUserKey(userId) + ':feed';
+  }
+
   function close () {
     client.quit();
   }
 
   function saveShow (show, callback) {
-    function saveDetails (show, callback) {
-      var key = 'show:' + show.imdb_id;
+    getTime(function (err, time) {
+      if (err) { return cb(callback, err); }
 
-      client.hmset(key, {
-        imdb_id: show.imdb_id,
-        active: show.active,
-        title: show.title,
-        synopsis: show.synopsis,
-        year: show.year,
-        country: show.country,
-        network: show.network,
-        rating: show.rating,
-        poster: show.poster,
-        fanart: show.fanart
+      function saveDetails (show, callback) {
+        var key = makeShowKey(show);
+        var show = removeNonScalars(show);
+        show.timestamp = time;
 
-      }, function (err) {
-        cb(callback, err, show);
-      });
-    }
-
-    function saveEpisode (show, callback) {
-      if (!show.latestEpisode) {
-        return cb(callback);
+        client.hmset(key, show, function (err) {
+          cb(callback, err, show);
+        });
       }
 
-      var key = 'episode:' + show.imdb_id;
-      var episode = show.latestEpisode;
+      function addToSet (show, callback) {
+        if (!show.active) {
+          client.srem('shows:active', show.id, function () {
+            client.sadd('shows:inactive', show.id, function (err) {
+              cb(callback, err);
+            });
+          });
 
-      getTime(function (err, time) {
+        } else {
+          client.srem('shows:inactive', show.id, function () {
+            client.sadd('shows:active', show.id, function (err) {
+              cb(callback, err);
+            });
+          });
+        }
+      }
+
+      async.parallel([
+        function (callback) {
+          saveDetails(show, callback);
+        },
+        function (callback) {
+          addToSet(show, callback);
+        }
+
+      ], function (err) {
         if (err) { return cb(callback, err); }
 
-        client.hgetall(key, function (err, currentEpisode) {
-          var ts = time;
-
-          if (currentEpisode && +currentEpisode.sien === +episode.sien) {
-            if (!currentEpisode.timestamp) { ts = +currentEpisode.first_aired; }
-            if (currentEpisode.timestamp) { ts = +currentEpisode.timestamp; }
-          }
-
-          client.hmset(key, {
-            imdb_id: show.imdb_id,
-            sien: episode.sien,
-            season: episode.season,
-            episode: episode.episode,
-            title: episode.title,
-            overview: episode.overview,
-            first_aired: episode.first_aired,
-            timestamp: ts
-
-          }, function (err) {
-            cb(callback, err);
-          });
-        });
-
+        cb(callback, null, show);
       });
-
-    }
-
-    function addToSet (show, callback) {
-      if (!show.active) {
-        client.srem('shows:active', show.imdb_id, function () {
-          client.sadd('shows:inactive', show.imdb_id, function (err) {
-            cb(callback, err);
-          });
-        });
-
-      } else {
-        client.srem('shows:inactive', show.imdb_id, function () {
-          client.sadd('shows:active', show.imdb_id, function (err) {
-            cb(callback, err);
-          });
-        });
-      }
-    }
-
-    async.parallel([
-      function (callback) {
-        saveDetails(show, callback);
-      },
-      function (callback) {
-        saveEpisode(show, callback);
-      },
-      function (callback) {
-        addToSet(show, callback);
-      }
-
-    ], function (err) {
-      if (err) {
-        return callback(err);
-      }
-
-      cb(callback, null, show);
     });
+
   }
 
-  function saveLatestEpisode (show, callback) {
-    if (!show.latestEpisode) {
-      return cb(callback);
-    }
-
-    var episode = show.latestEpisode;
-    var key = 'episode:' + show.imdb_id + ':' + episode.sien;
+  function saveEpisode (showId, episode, callback) {
+    showId = typeof showId === 'object' ? showId.id : showId;
 
     getTime(function (err, time) {
       if (err) { return cb(callback, err); }
 
-      client.hmset(key, {
-        imdb_id: show.imdb_id,
-        sien: episode.sien,
-        season: episode.season,
-        episode: episode.episode,
-        title: episode.title,
-        overview: episode.overview,
-        first_aired: episode.first_aired,
-        timestamp: time
+      function saveDetails (showId, episode, callback) {
+        var key = makeEpisodeKey(showId, episode);
 
-      }, function (err) {
+        client.exists(key, function (err, exists) {
+          if (err || exists) { return cb(callback); }
+
+          episode = removeNonScalars(episode);
+
+          episode.show_id = showId;
+          episode.timestamp = time;
+
+          client.hmset(key, episode, function (err) {
+            cb(callback, err, episode);
+          });
+        });
+
+      }
+
+      function addToSet (showId, episode, callback) {
+        var episodeKey = makeEpisodeKey(showId, episode);
+        var key = makeEpisodesKey(showId);
+
+        client.sadd(key, episodeKey, function (err) {
+          cb(callback, err);
+        });
+      }
+
+      async.parallel([
+        function (callback) {
+          saveDetails(showId, episode, callback);
+        },
+        function (callback) {
+          addToSet(showId, episode, callback);
+        }
+
+      ], function (err) {
+        if (err) { return cb(callback, err); }
+
+        cb(callback, null);
+      });
+    });
+  }
+
+  function saveLatestEpisode (showId, episodeSien, callback) {
+    var key = makeEpisodeKey(showId);
+    var episodeKey = makeEpisodeKey(showId, episodeSien);
+
+    client.hgetall(episodeKey, function (err, episode) {
+      if (err) { return cb(callback, err); }
+
+      client.hmset(key, episode, function (err) {
+        if (err) { return cb(callback, err); }
+
         cb(callback, err);
       });
     });
@@ -165,8 +195,9 @@ function db (options) {
     });
   }
 
-  function getLatestEpisode (imdbId, callback) {
-    var key = 'episode:' + imdbId;
+  function getLatestEpisode (showId, callback) {
+    var key = makeEpisodeKey(showId);
+
     client.hgetall(key, function (err, episode) {
       cb(callback, err, episode);
     });
@@ -200,28 +231,6 @@ function db (options) {
   function getInactiveShowIds (callback) {
     client.smembers('shows:inactive', function (err, ids) {
       cb(callback, err, ids);
-    });
-  }
-
-  function logEpisodeUpdate (update, callback) {
-    getTime(function (err, time) {
-      if (err) { return cb(callback, err); }
-
-      var key = 'episode_update:' + padTime(time) + ':' + update.imdb_id;
-
-      var data = {
-        imdb_id: update.imdb_id,
-        time: time,
-        prev_season: update.prev_season,
-        prev_episode: update.prev_episode,
-        new_season: update.new_season,
-        new_episode: update.new_episode
-
-      };
-
-      client.hmset(key, data, function (err) {
-        cb(callback, err, data);
-      });
     });
   }
 
@@ -261,97 +270,113 @@ function db (options) {
     });
   }
 
-  function subscriptionsKey (userId) {
-    return "subscriptions:" + userId;
-  }
-
-  function subscribersKey (showId) {
-    return "subscribers:" + showId;
-  }
-
   function getSubscriptions (userId, callback) {
-    var key = subscriptionsKey(userId);
+    var key = makeSubscriptionsKey(userId);
     client.smembers(key, function (err, subscriptions) {
       cb(callback, err, subscriptions);
     });
   }
 
   function getSubscribers (showId, callback) {
-    var key = subscribersKey(showId);
+    var key = makeSubscribersKey(showId);
+
     client.smembers(key, function (err, subscribers) {
       cb(callback, err, subscribers);
     });
   }
 
   function subscribeShow (userId, showId, callback) {
-
-    var keyUser = subscriptionsKey(userId);
-    var keyShow = subscribersKey(showId);
+    var subscriptionsKey = makeSubscriptionsKey(userId);
+    var subscribersKey = makeSubscribersKey(showId);
 
     var multi = client.multi();
 
-    multi.sadd(keyShow, userId);
-    multi.sadd(keyUser, showId);
+    multi.sadd(subscribersKey, userId);
+    multi.sadd(subscriptionsKey, showId);
 
     multi.exec(function (err) {
-      cb(callback, err);
+      if (err) { return cb(callback, err); }
+
+      addLatestEpisodeToFeed(userId, showId, function (err) {
+        cb(callback, err);
+      });
     });
   }
 
   function unsubscribeShow (userId, showId, callback) {
-
-    var keyUser = subscriptionsKey(userId);
-    var keyShow = subscribersKey(showId);
+    var subscriptionsKey = makeSubscriptionsKey(userId);
+    var subscribersKey = makeSubscribersKey(showId);
 
     var multi = client.multi();
 
-    multi.srem(keyShow, userId);
-    multi.srem(keyUser, showId);
+    multi.srem(subscribersKey, userId);
+    multi.srem(subscriptionsKey, showId);
 
     multi.exec(function (err) {
-      cb(callback, err);
+      removeShowFromFeed(userId, showId, function () {
+        cb(callback, err);
+      });
     });
   }
 
-  function feedKey(userId) {
-    return 'feed:' + userId;
+  function removeShowFromFeed (userId, showId, callback) {
+    var feedKey = makeFeedKey(userId);
+    var showKey = makeShowKey(showId);
+
+    client.smembers(feedKey, function (err, episodeKeys) {
+      if (err) { return cb(callback, err); }
+
+      episodeKeys = episodeKeys.filter(function (key) {
+        return key.indexOf(showKey) !== -1;
+      });
+
+      var multi = client.multi();
+      episodeKeys.forEach(function (episodeKey) {
+        multi.srem(feedKey, episodeKey);
+      });
+
+      multi.exec(function (err) {
+        cb(callback, err);
+      });
+    });
   }
 
   function addLatestEpisodeToFeed (userId, show, callback) {
-    if (!show.latestEpisode) {
-      return cb(callback);
-    }
+    getLatestEpisode(show, function (err, episode) {
+      if (err) { return cb(callback, err); }
 
-    var episode = show.latestEpisode;
-    var episodeKey = 'episode:' + show.imdb_id + ':' + episode.sien;
-    var key = feedKey(userId);
+      var episodeKey = makeEpisodeKey(show, episode);
+      var feedKey = makeFeedKey(userId);
 
-    client.lpush(key, episodeKey, function (err) {
-      cb(callback, err);
+      client.sadd(feedKey, episodeKey, function (err) {
+        cb(callback, err);
+      });
     });
   }
 
   function getFeed(userId, callback) {
-    var key = feedKey(userId);
+    var feedKey = makeFeedKey(userId);
 
-    client.lrange(key, 0, -1, function (err, feedKeys) {
+    client.smembers(feedKey, function (err, feedItemKeys) {
       if (err) { return db(callback, null, []); }
 
       async.map(
-        feedKeys,
+        feedItemKeys,
 
-        function (feedKey, callback) {
-          client.hgetall(feedKey, function (err, episode) {
+        function (feedItemKey, callback) {
+          client.hgetall(feedItemKey, function (err, episode) {
             if (err) { return callback(err); }
             if (!episode) { return callback(err); }
 
-            getShow(episode.imdb_id, function (err, show) {
+            getShow(episode.show_id, function (err, show) {
               if (err) { return callback(err); }
 
               callback(null, {
+                show_id: show.id,
                 imdb_id: show.imdb_id,
                 title: show.title,
                 episide_title: episode.title,
+                sien: episode.sien,
                 season: episode.season,
                 episode: episode.episode,
                 poster: show.poster,
@@ -366,47 +391,14 @@ function db (options) {
           // filter out null values
           results = results.filter(function (result) {
             return !!result;
+          })
+          .sort(function (a, b) {
+            return b.sien - a.sien;
           });
 
           cb(callback, null, results || []);
         }
       );
-    });
-  }
-
-  function getUser (userId, callback) {
-    var key = 'user:' + userId;
-
-    client.hgetall(key, function (err, user) {
-      cb(callback, err, user);
-    });
-  }
-
-  function createUser (data, callback) {
-    if (typeof data !== 'object') { return cb(callback, new Error('Missing data object')); }
-    if (!data.type) { return cb(callback, new Error('Missing type')) }
-    if (!data.username) { return cb(callback, new Error('Missing username')) }
-
-    var userId = createUserId(data.type, data.username);
-
-    getUser(userId, function (err, user) {
-      if (user) { return cb(callback, new Error('User already exists')); }
-
-      getTime(function (err, time) {
-        if (err) { return cb(callback, err); }
-
-        var key = 'user:' + userId;
-
-        var userData = {
-          type: data.type,
-          username: data.username,
-          createdAt: time
-        };
-
-        client.hmset(key, userData, function (err) {
-          cb(callback, err, userData);
-        });
-      });
     });
   }
 
@@ -419,99 +411,15 @@ function db (options) {
     });
   }
 
-  function createPin () {
-    var min = 100000;
-    var max = 999999;
-
-    return Math.floor( Math.random() * ( max - min + 1 ) + min);
-  }
-
-  function createUserAuthToken (ttl, userId, callback) {
-    getUser(userId, function (err, user) {
-      if (!user) { return cb(callback, new Error('User not found')); }
-
-      createToken(32, function (err, token) {
-        if (err) { return cb(callback, err); }
-
-        getTime(function (err, time) {
-
-          var tokenKey = 'userauthtoken:token:' + token;
-          var userTokenKey = 'userauthtoken:' + userId;
-          var pin = createPin();
-
-          var tokenData = {
-            createdAt: time,
-            token: token,
-            pin: pin
-          };
-
-          var multi = client.multi();
-
-          multi.set(userTokenKey, token);
-          multi.pexpire(userTokenKey, ttl);
-
-          multi.hmset(tokenKey, tokenData);
-          multi.pexpire(tokenKey, ttl);
-
-          multi.exec(function (err) {
-            cb(callback, err, tokenData);
-          });
-        });
-      });
-    });
-  }
-
-  function getUserAuthToken (userId, callback) {
-    var userTokenKey = 'userauthtoken:' + userId;
-
-    client.get(userTokenKey, function (err, token) {
-      if (err) { return cb(callback, err); }
-      if (!token) { return cb(callback, new Error('No token')); }
-
-      var tokenKey = 'userauthtoken:token:' + token;
-
-      client.hgetall(tokenKey, function (err, tokenData) {
-        if (!tokenData) { return cb(callback, new Error('No token')); }
-
-        cb(callback, err, tokenData);
-      });
-    });
-  }
-
-  function deleteUserAuthToken (userId, callback) {
-    getUserAuthToken(type, username, function (err, tokenData) {
-      if (err) { return cb(callback);}
-      if (!tokenData) { return cb(callback);}
-
-      var userTokenKey = 'userauthtoken:' + userId;
-      var tokenKey = 'userauthtoken:token:' + tokenData.token;
-
-      client.del(userTokenKey);
-      client.del(tokenKey);
-
-      cb(callback);
-    });
-  }
-
-  function createUserId (type, username) {
-    return String(type + ':' + username).toLowerCase();;
-  }
-
   return {
-    createUserId: createUserId,
-    createUser: createUser,
-    getUser: getUser,
-    createUserAuthToken: createUserAuthToken,
-    getUserAuthToken: getUserAuthToken,
-    deleteUserAuthToken: deleteUserAuthToken,
     saveShow: saveShow,
+    saveEpisode: saveEpisode,
     saveLatestEpisode: saveLatestEpisode,
     getShow: getShow,
     getLatestEpisode: getLatestEpisode,
     getActiveShowIds: getActiveShowIds,
     getInactiveShowIds: getInactiveShowIds,
     createActiveShowsStream: createActiveShowsStream,
-    logEpisodeUpdate: logEpisodeUpdate,
     log: log,
     getSubscribers: getSubscribers,
     getSubscriptions: getSubscriptions,
