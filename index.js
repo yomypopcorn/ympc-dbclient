@@ -343,7 +343,7 @@ function db (options) {
 
   function addLatestEpisodeToFeed (userId, show, callback) {
     getLatestEpisode(show, function (err, episode) {
-      if (err) { return cb(callback, err); }
+      if (err || !episode) { return cb(callback, err); }
 
       var episodeKey = makeEpisodeKey(show, episode);
       var feedKey = makeFeedKey(userId);
