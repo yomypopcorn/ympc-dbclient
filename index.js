@@ -271,7 +271,7 @@ function db (options) {
     };
 
     return subscribe(userId, showId)
-      .then(addLatestEpisodeToFeed(userId, showId))
+      .then(addLatestEpisodeToFeed.bind(null, userId, showId))
       .nodeify(callback);
   }
 
@@ -289,7 +289,7 @@ function db (options) {
     };
 
     return unsubscribe(userId, showId)
-      .then(removeShowFromFeed(userId, showId))
+      .then(removeShowFromFeed.bind(null, userId, showId))
       .nodeify(callback);
   }
 
