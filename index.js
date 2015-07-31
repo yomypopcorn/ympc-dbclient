@@ -91,21 +91,21 @@ function db (options) {
       show = removeNonScalars(show);
 
       return client.hmsetAsync(key, show)
-        .then(function () { return show; });
+        .return(show);
     };
 
     var removeFromWrongSet = function (show) {
       var remKey = show.active ? makeInactiveShowsKey() : makeActiveShowsKey();
 
       return client.sremAsync(remKey, show.id)
-        .then(function () { return show; });
+        .return(show);
     };
 
     var addToRightSet = function (show) {
       var addKey = show.active ? makeActiveShowsKey() : makeInactiveShowsKey();
 
       return client.saddAsync(addKey, show.id)
-        .then(function () { return show; });
+        .return(show);
     };
 
     return addTimestamp(show)
@@ -133,7 +133,7 @@ function db (options) {
           if (exists) { return episode; }
 
           return client.hmsetAsync(key, episode)
-            .then(function () { return episode; });
+            .return(episode);
         });
     };
 
@@ -142,7 +142,7 @@ function db (options) {
       var key = makeEpisodesKey(showId);
 
       return client.saddAsync(key, episodeKey)
-        .then(function () { return episode; });
+        .return(episode);
     };
 
     return Promise.resolve(episode)
@@ -160,7 +160,7 @@ function db (options) {
     return client.hgetallAsync(episodeKey)
       .then(function (episode) {
         return client.hmsetAsync(key, episode)
-          .then(function () { return episode; });
+          .return(episode);
       })
       .nodeify(callback);
   }
