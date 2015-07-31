@@ -73,6 +73,10 @@ function db (options) {
     return 'shows:inactive';
   }
 
+  function makeYoFailCountKey (userId) {
+    return makeUserKey(userId) + ':yo-fail-count';
+  }
+
   function close () {
     client.quit();
   }
@@ -388,6 +392,18 @@ function db (options) {
     }).nodeify(callback);
   }
 
+  function incrementYoFailCount (userId, callback) {
+    var key = makeYoFailCountKey(userId);
+    return client.incrAsync(key)
+      .nodeify(callback);
+  }
+
+  function resetYoFailCount (userId, callback) {
+    var key = makeYoFailCountKey(userId);
+    return client.delAsync(key)
+      .nodeify(callback);
+  }
+
   return {
     saveShow: saveShow,
     saveEpisode: saveEpisode,
@@ -406,6 +422,8 @@ function db (options) {
     getFeed: getFeed,
     getTime: getTime,
     logScan: logScan,
+    incrementYoFailCount: incrementYoFailCount,
+    resetYoFailCount: resetYoFailCount,
     close: close
   };
 }
