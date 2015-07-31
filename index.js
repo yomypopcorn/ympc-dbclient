@@ -1,25 +1,14 @@
-var debug = require('debug')('yomypopcorn:dbclient');
 var path = require('path');
 var crypto = require('crypto');
-var async = require('async');
-var redis = require('redis');
-var extend = require('object-assign');
+var Promise = require('bluebird');
+var redis = Promise.promisifyAll(require('redis'));
 var through2 = require('through2');
 var utils = require('yomypopcorn-utils');
 
 exports = module.exports = db;
 
 var padTime = utils.padTime;
-var cb = utils.cb;
-
-function removeNonScalars (obj) {
-    function replacer (key, value) {
-      if (key && typeof value === 'object') { return undefined; }
-      return value;
-    }
-
-    return JSON.parse(JSON.stringify(obj, replacer));
-}
+var removeNonScalars = utils.removeNonScalars;
 
 function db (options) {
   options = options || {};
@@ -72,166 +61,151 @@ function db (options) {
     return makeUserKey(userId) + ':feed';
   }
 
+  function makeLogKey (type, time) {
+    return 'log:' + type + ':' + padTime(time);
+  }
+
+  function makeActiveShowsKey () {
+    return 'shows:active';
+  }
+
+  function makeInactiveShowsKey () {
+    return 'shows:inactive';
+  }
+
   function close () {
     client.quit();
   }
 
-  function saveShow (show, callback) {
-    getTime(function (err, time) {
-      if (err) { return cb(callback, err); }
-
-      function saveDetails (show, callback) {
-        var key = makeShowKey(show);
-        var show = removeNonScalars(show);
-        show.timestamp = time;
-
-        client.hmset(key, show, function (err) {
-          cb(callback, err, show);
-        });
-      }
-
-      function addToSet (show, callback) {
-        if (!show.active) {
-          client.srem('shows:active', show.id, function () {
-            client.sadd('shows:inactive', show.id, function (err) {
-              cb(callback, err);
-            });
-          });
-
-        } else {
-          client.srem('shows:inactive', show.id, function () {
-            client.sadd('shows:active', show.id, function (err) {
-              cb(callback, err);
-            });
-          });
-        }
-      }
-
-      async.parallel([
-        function (callback) {
-          saveDetails(show, callback);
-        },
-        function (callback) {
-          addToSet(show, callback);
-        }
-
-      ], function (err) {
-        if (err) { return cb(callback, err); }
-
-        cb(callback, null, show);
+  function addTimestamp (obj) {
+    return getTime()
+      .then(function (time) {
+        obj.timestamp = time;
+        return obj;
       });
-    });
+  }
 
+  function saveShow (show, callback) {
+    var saveDetails = function (show) {
+      var key = makeShowKey(show);
+      show = removeNonScalars(show);
+
+      return client.hmsetAsync(key, show)
+        .return(show);
+    };
+
+    var removeFromWrongSet = function (show) {
+      var remKey = show.active ? makeInactiveShowsKey() : makeActiveShowsKey();
+
+      return client.sremAsync(remKey, show.id)
+        .return(show);
+    };
+
+    var addToRightSet = function (show) {
+      var addKey = show.active ? makeActiveShowsKey() : makeInactiveShowsKey();
+
+      return client.saddAsync(addKey, show.id)
+        .return(show);
+    };
+
+    return addTimestamp(show)
+      .then(saveDetails)
+      .then(removeFromWrongSet)
+      .then(addToRightSet)
+      .nodeify(callback);
   }
 
   function saveEpisode (showId, episode, callback) {
     showId = typeof showId === 'object' ? showId.id : showId;
 
-    getTime(function (err, time) {
-      if (err) { return cb(callback, err); }
+    var addShowId = function (showId) {
+      return function (episode) {
+        episode.show_id = showId;
+        return episode;
+      };
+    };
 
-      function saveDetails (showId, episode, callback) {
-        var key = makeEpisodeKey(showId, episode);
+    var saveDetails = function (episode) {
+      var key = makeEpisodeKey(episode.show_id, episode);
 
-        client.exists(key, function (err, exists) {
-          if (err || exists) { return cb(callback); }
+      return client.existsAsync(key)
+        .then(function (exists) {
+          if (exists) { return episode; }
 
-          episode = removeNonScalars(episode);
-
-          episode.show_id = showId;
-          episode.timestamp = time;
-
-          client.hmset(key, episode, function (err) {
-            cb(callback, err, episode);
-          });
+          return client.hmsetAsync(key, episode)
+            .return(episode);
         });
+    };
 
-      }
+    var addToSet = function (episode) {
+      var episodeKey = makeEpisodeKey(episode.show_id, episode);
+      var key = makeEpisodesKey(showId);
 
-      function addToSet (showId, episode, callback) {
-        var episodeKey = makeEpisodeKey(showId, episode);
-        var key = makeEpisodesKey(showId);
+      return client.saddAsync(key, episodeKey)
+        .return(episode);
+    };
 
-        client.sadd(key, episodeKey, function (err) {
-          cb(callback, err);
-        });
-      }
-
-      async.parallel([
-        function (callback) {
-          saveDetails(showId, episode, callback);
-        },
-        function (callback) {
-          addToSet(showId, episode, callback);
-        }
-
-      ], function (err) {
-        if (err) { return cb(callback, err); }
-
-        cb(callback, null);
-      });
-    });
+    return Promise.resolve(episode)
+      .then(addShowId(showId))
+      .then(addTimestamp)
+      .then(saveDetails)
+      .then(addToSet)
+      .nodeify(callback);
   }
 
   function saveLatestEpisode (showId, episodeSien, callback) {
     var key = makeEpisodeKey(showId);
     var episodeKey = makeEpisodeKey(showId, episodeSien);
 
-    client.hgetall(episodeKey, function (err, episode) {
-      if (err) { return cb(callback, err); }
-
-      client.hmset(key, episode, function (err) {
-        if (err) { return cb(callback, err); }
-
-        cb(callback, err);
-      });
-    });
+    return client.hgetallAsync(episodeKey)
+      .then(function (episode) {
+        return client.hmsetAsync(key, episode)
+          .return(episode);
+      })
+      .nodeify(callback);
   }
 
-  function getShow (imdbId, callback) {
-    var key = 'show:' + imdbId;
-    client.hgetall(key, function (err, show) {
-      cb(callback, err, show);
-    });
+  function getShow (showId, callback) {
+    var key = makeShowKey(showId);
+
+    return client.hgetallAsync(key)
+      .nodeify(callback);
   }
 
   function getLatestEpisode (showId, callback) {
     var key = makeEpisodeKey(showId);
 
-    client.hgetall(key, function (err, episode) {
-      cb(callback, err, episode);
-    });
+    return client.hgetallAsync(key)
+      .nodeify(callback);
   }
 
   function getTime (callback) {
-    client.time(function (err, t) {
-      if (err) { return cb(callback, err); }
-
-      var time = (t[0] * 1000) + Math.round(t[1] / 1000);
-      cb(callback, null, time);
-    });
+    return client.timeAsync()
+      .then(function (t) {
+        return (t[0] * 1000) + Math.round(t[1] / 1000);
+      })
+      .nodeify(callback);
   }
 
   function logScan (callback) {
-    getTime(function (err, time) {
-      if (err) { return cb(callback, err); }
+    var writeLog = function (time) {
+      var key = 'latest_scan:start';
+      return client.setAsync(key, time);
+    };
 
-      client.set('latest_scan:start', time, function (err) {
-        cb(callback, err);
-      });
-    });
+    return getTime()
+      .then(writeLog)
+      .nodeify(callback);
   }
 
   function getActiveShowIds (callback) {
-    client.smembers('shows:active', function (err, ids) {
-      cb(callback, err, ids);
-    });
+    return client.smembersAsync(makeActiveShowsKey())
+      .nodeify(callback);
   }
 
   function getInactiveShowIds (callback) {
-    client.smembers('shows:inactive', function (err, ids) {
-      cb(callback, err, ids);
-    });
+    return client.smembersAsync(makeInactiveShowsKey())
+      .nodeify(callback);
   }
 
   function createActiveShowsStream () {
@@ -257,121 +231,119 @@ function db (options) {
   }
 
   function log (type, data, callback) {
-    getTime(function (err, time) {
-      if (err) { return cb(callback, err); }
-
-      var key = 'log:' + type + ':' + padTime(time);
-
+    var writeLog = function (time) {
+      var key = makeLogKey(type, time);
       data.time = time;
 
-      client.hmset(key, data, function (err) {
-        cb(callback, err, data)
-      });
-    });
+      return client.hmsetAsync(key, data);
+    };
+
+    return getTime()
+      .then(writeLog)
+      .nodeify(callback);
   }
 
   function getSubscriptions (userId, callback) {
     var key = makeSubscriptionsKey(userId);
-    client.smembers(key, function (err, subscriptions) {
-      cb(callback, err, subscriptions);
-    });
+
+    return client.smembersAsync(key)
+      .nodeify(callback);
   }
 
   function getSubscribers (showId, callback) {
     var key = makeSubscribersKey(showId);
 
-    client.smembers(key, function (err, subscribers) {
-      cb(callback, err, subscribers);
-    });
+    return client.smembersAsync(key)
+      .nodeify(callback);
   }
 
   function subscribeShow (userId, showId, callback) {
-    var subscriptionsKey = makeSubscriptionsKey(userId);
-    var subscribersKey = makeSubscribersKey(showId);
+    var subscribe = function () {
+      var subscriptionsKey = makeSubscriptionsKey(userId);
+      var subscribersKey = makeSubscribersKey(showId);
 
-    var multi = client.multi();
+      var multi = Promise.promisifyAll(client.multi());
 
-    multi.sadd(subscribersKey, userId);
-    multi.sadd(subscriptionsKey, showId);
+      multi.sadd(subscribersKey, userId);
+      multi.sadd(subscriptionsKey, showId);
 
-    multi.exec(function (err) {
-      if (err) { return cb(callback, err); }
+      return multi.execAsync();
+    };
 
-      addLatestEpisodeToFeed(userId, showId, function (err) {
-        cb(callback, err);
-      });
-    });
+    return subscribe(userId, showId)
+      .then(addLatestEpisodeToFeed.bind(null, userId, showId))
+      .nodeify(callback);
   }
 
   function unsubscribeShow (userId, showId, callback) {
-    var subscriptionsKey = makeSubscriptionsKey(userId);
-    var subscribersKey = makeSubscribersKey(showId);
+    var unsubscribe = function (userId, showId) {
+      var subscriptionsKey = makeSubscriptionsKey(userId);
+      var subscribersKey = makeSubscribersKey(showId);
 
-    var multi = client.multi();
+      var multi = Promise.promisifyAll(client.multi());
 
-    multi.srem(subscribersKey, userId);
-    multi.srem(subscriptionsKey, showId);
+      multi.srem(subscribersKey, userId);
+      multi.srem(subscriptionsKey, showId);
 
-    multi.exec(function (err) {
-      removeShowFromFeed(userId, showId, function () {
-        cb(callback, err);
-      });
-    });
+      return multi.execAsync();
+    };
+
+    return unsubscribe(userId, showId)
+      .then(removeShowFromFeed.bind(null, userId, showId))
+      .nodeify(callback);
   }
 
   function removeShowFromFeed (userId, showId, callback) {
     var feedKey = makeFeedKey(userId);
     var showKey = makeShowKey(showId);
 
-    client.smembers(feedKey, function (err, episodeKeys) {
-      if (err) { return cb(callback, err); }
+    client.smembersAsync(feedKey)
+      .then(function (episodeKeys) {
+        var multi = Promise.promisifyAll(client.multi());
 
-      episodeKeys = episodeKeys.filter(function (key) {
-        return key.indexOf(showKey) !== -1;
-      });
+        episodeKeys = episodeKeys.filter(function (key) {
+          return key.indexOf(showKey) !== -1;
+        });
 
-      var multi = client.multi();
-      episodeKeys.forEach(function (episodeKey) {
-        multi.srem(feedKey, episodeKey);
-      });
+        episodeKeys.forEach(function (episodeKey) {
+          multi.srem(feedKey, episodeKey);
+        });
 
-      multi.exec(function (err) {
-        cb(callback, err);
-      });
-    });
+        return multi.execAsync();
+      })
+      .nodeify(callback);
   }
 
   function addLatestEpisodeToFeed (userId, show, callback) {
-    getLatestEpisode(show, function (err, episode) {
-      if (err || !episode) { return cb(callback, err); }
+    return getLatestEpisode(show)
+      .then(function (episode) {
+        if (!episode) { return Promise.reject(); }
 
-      var episodeKey = makeEpisodeKey(show, episode);
-      var feedKey = makeFeedKey(userId);
+        var episodeKey = makeEpisodeKey(show, episode);
+        var feedKey = makeFeedKey(userId);
 
-      client.sadd(feedKey, episodeKey, function (err) {
-        cb(callback, err);
-      });
-    });
+        return client.saddAsync(feedKey, episodeKey);
+      })
+      .nodeify(callback);
   }
 
   function getFeed(userId, callback) {
-    var feedKey = makeFeedKey(userId);
+    var getFeedItemKeys = function (userId) {
+      var feedKey = makeFeedKey(userId);
 
-    client.smembers(feedKey, function (err, feedItemKeys) {
-      if (err) { return db(callback, null, []); }
+      return client.smembersAsync(feedKey);
+    };
 
-      async.map(
-        feedItemKeys,
+    var getEpisodeByKey = function (episodeKey) {
+      return client.hgetallAsync(episodeKey);
+    };
 
-        function (feedItemKey, callback) {
-          client.hgetall(feedItemKey, function (err, episode) {
-            if (err) { return callback(err); }
-            if (!episode) { return callback(err); }
-
-            getShow(episode.show_id, function (err, show) {
-              if (err) { return callback(err); }
-
-              callback(null, {
+    var getFeedItem = function (episodeKey) {
+      return getEpisodeByKey(episodeKey)
+        .then(function (episode) {
+          return getShow(episode.show_id)
+            .then(function (show) {
+              return {
                 show_id: show.id,
                 imdb_id: show.imdb_id,
                 title: show.title,
@@ -382,35 +354,38 @@ function db (options) {
                 poster: show.poster,
                 first_aired: episode.first_aired,
                 timestamp: episode.timestamp
-              });
+              };
             });
-          });
-        },
+        });
+    };
 
-        function (err, results) {
-          // filter out null values
-          results = results.filter(function (result) {
-            return !!result;
-          })
-          .sort(function (a, b) {
-            var ats = a.timestamp || a.first_aired;
-            var bts = b.timestamp || b.first_aired;
-            return bts - ats;
-          });
+    var filterAndSort = function (feedItems) {
+      return feedItems
+        .filter(function (result) {
+          return !!result;
+        })
+        .sort(function (a, b) {
+          var ats = a.timestamp || a.first_aired;
+          var bts = b.timestamp || b.first_aired;
+          return bts - ats;
+        });
+    };
 
-          cb(callback, null, results || []);
-        }
-      );
-    });
+    return getFeedItemKeys(userId)
+      .map(getFeedItem)
+      .then(filterAndSort)
+      .nodeify(callback);
   }
 
   function createToken (length, callback) {
-    crypto.randomBytes(length, function (err, token) {
-      if (err) { return cb(callback, err); }
-      if (!token) { return cb(new Error('Failed to generate token')); }
+    return new Promise(function (resolve, reject) {
+      crypto.randomBytes(length, function (err, token) {
+        if (err) { return reject(err); }
+        if (!token) { return reject(new Error('Failed to generate token')); }
 
-      cb(callback, null, token.toString('hex'));
-    });
+        resolve(token.toString('hex'));
+      });
+    }).nodeify(callback);
   }
 
   return {
