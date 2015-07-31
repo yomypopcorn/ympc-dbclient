@@ -317,7 +317,7 @@ function db (options) {
   function addLatestEpisodeToFeed (userId, show, callback) {
     return getLatestEpisode(show)
       .then(function (episode) {
-        if (!episode) { return Promise.reject(); }
+        if (!episode) { return Promise.resolve(); }
 
         var episodeKey = makeEpisodeKey(show, episode);
         var feedKey = makeFeedKey(userId);
