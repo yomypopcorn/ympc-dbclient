@@ -1,5 +1,5 @@
 {
-  "name": "yomypopcorn-dbclient",
+  "name": "ympc-dbclient",
   "version": "0.0.7",
   "description": "A nice API for the Redis database used throughout YOMYPOPCORN apps",
   "main": "index.js",
