@@ -3,7 +3,7 @@ var crypto = require('crypto');
 var Promise = require('bluebird');
 var redis = Promise.promisifyAll(require('redis'));
 var through2 = require('through2');
-var utils = require('yomypopcorn-utils');
+var utils = require('ympc-utils');
 
 exports = module.exports = db;
 

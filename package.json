@@ -21,6 +21,6 @@
     "hiredis": "^0.4.0",
     "redis": "^0.12.1",
     "through2": "^0.6.3",
-    "yomypopcorn-utils": "^1.0.0"
+    "ympc-utils": "git+https://github.com/yomypopcorn/ympc-utils.git#master"
   }
 }
