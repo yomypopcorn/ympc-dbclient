@@ -318,6 +318,14 @@ function db (options) {
       .nodeify(callback);
   }
 
+  function removeItemFromFeed (userId, showId, sien, callback) {
+    var feedKey = makeFeedKey(userId);
+    var episodeKey = makeEpisodeKey(showId, sien);
+
+    return client.sremAsync(feedKey, episodeKey)
+      .nodeify(callback);
+  }
+
   function addLatestEpisodeToFeed (userId, show, callback) {
     return getLatestEpisode(show)
       .then(function (episode) {
@@ -418,6 +426,7 @@ function db (options) {
     getSubscriptions: getSubscriptions,
     subscribeShow: subscribeShow,
     unsubscribeShow: unsubscribeShow,
+    removeItemFromFeed: removeItemFromFeed,
     addLatestEpisodeToFeed: addLatestEpisodeToFeed,
     getFeed: getFeed,
     getTime: getTime,
